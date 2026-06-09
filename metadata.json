@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: 我的股票存摺",
+  "description": "AI 專業財務智庫與個股決策報告系統，支援台股即時股價同步與語音決策廣播功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
