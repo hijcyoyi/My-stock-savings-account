@@ -491,10 +491,48 @@ export default function App() {
               setTradeForm(prev => ({ ...prev, isSearching: false }));
             }
           } else {
-            setTradeForm(prev => ({ ...prev, isSearching: false }));
+            // Static/Offline Fallback (e.g., GitHub Pages)
+            const fallback = DEFAULT_STOCKS.find(s => s.id === tradeForm.id);
+            if (fallback) {
+              setTradeForm(prev => ({
+                ...prev,
+                name: fallback.name,
+                currentPrice: fallback.currentPrice,
+                price: prev.price === "" ? fallback.currentPrice : prev.price,
+                isSearching: false,
+              }));
+            } else {
+              const mockPrice = 60 + Math.floor(Math.random() * 80);
+              setTradeForm(prev => ({
+                ...prev,
+                name: `個股 (${tradeForm.id})`,
+                currentPrice: mockPrice,
+                price: prev.price === "" ? mockPrice : prev.price,
+                isSearching: false,
+              }));
+            }
           }
         } catch (e) {
-          setTradeForm(prev => ({ ...prev, isSearching: false }));
+          // Static/Offline Fallback (e.g., GitHub Pages)
+          const fallback = DEFAULT_STOCKS.find(s => s.id === tradeForm.id);
+          if (fallback) {
+            setTradeForm(prev => ({
+              ...prev,
+              name: fallback.name,
+              currentPrice: fallback.currentPrice,
+              price: prev.price === "" ? fallback.currentPrice : prev.price,
+              isSearching: false,
+            }));
+          } else {
+            const mockPrice = 60 + Math.floor(Math.random() * 80);
+            setTradeForm(prev => ({
+              ...prev,
+              name: `個股 (${tradeForm.id})`,
+              currentPrice: mockPrice,
+              price: prev.price === "" ? mockPrice : prev.price,
+              isSearching: false,
+            }));
+          }
         }
       } else {
          setTradeForm(prev => ({ ...prev, name: "", currentPrice: null, price: "" }));
@@ -662,11 +700,38 @@ export default function App() {
             if (fetched.ok) {
               const resJson = await fetched.json();
               return { id: item.id, resJson };
+            } else {
+              // Static Fallback (e.g., GitHub Pages) - simulated price fluctuation
+              const randomWalkChangePercent = (Math.random() * 3 - 1.5); // -1.5% to +1.5%
+              const currentP = item.currentPrice || 100;
+              const priceChange = Math.round(currentP * (randomWalkChangePercent / 100) * 10) / 10;
+              const newPrice = Math.max(5, Math.round((currentP + priceChange) * 10) / 10);
+              const totalChange = Math.round((priceChange) * 10) / 10;
+              return {
+                id: item.id,
+                resJson: {
+                  currentPrice: newPrice,
+                  change: totalChange,
+                  changePercent: Math.round((totalChange / (newPrice - totalChange)) * 100 * 100) / 100,
+                }
+              };
             }
           } catch (e) {
-            console.error(`Error syncing price for ${item.id}:`, e);
+            // Static Fallback (e.g., GitHub Pages) - simulated price fluctuation on catch
+            const randomWalkChangePercent = (Math.random() * 3 - 1.5); // -1.5% to +1.5%
+            const currentP = item.currentPrice || 100;
+            const priceChange = Math.round(currentP * (randomWalkChangePercent / 100) * 10) / 10;
+            const newPrice = Math.max(5, Math.round((currentP + priceChange) * 10) / 10);
+            const totalChange = Math.round((priceChange) * 10) / 10;
+            return {
+              id: item.id,
+              resJson: {
+                currentPrice: newPrice,
+                change: totalChange,
+                changePercent: Math.round((totalChange / (newPrice - totalChange)) * 100 * 100) / 100,
+              }
+            };
           }
-          return null;
         })
       );
 
