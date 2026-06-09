@@ -5,7 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: './',
+    base: '/My-stock-savings-account/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
