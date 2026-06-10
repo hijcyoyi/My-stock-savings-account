@@ -401,6 +401,12 @@ const getEnrichedDividendHistory = (stockId: string, currentInfo: any[]): any[] 
 };
 
 export default function App() {
+  const isStaticPages = typeof window !== "undefined" && (
+    window.location.hostname.includes("github.io") || 
+    window.location.hostname.includes("gitee.io") || 
+    window.location.protocol === "file:"
+  );
+
   const [stocks, setStocks] = useState<Stock[]>(() => {
     try {
       const stored = localStorage.getItem("my_stocks");
@@ -807,7 +813,11 @@ export default function App() {
 
   // Save stock ledger list to local storage
   useEffect(() => {
-    localStorage.setItem("my_stocks", JSON.stringify(stocks));
+    try {
+      localStorage.setItem("my_stocks", JSON.stringify(stocks));
+    } catch (e) {
+      console.warn("Storage replication bypassed in sandboxed sandbox frame:", e);
+    }
   }, [stocks]);
 
   // Execute server-side AI Diagnostic push
@@ -984,6 +994,15 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {isStaticPages && (
+        <div className="bg-[#fcf8f2] border-b border-[#eae1df] text-[#c07c77] md:px-6 px-4 py-3 text-xs font-semibold flex items-center justify-center gap-2.5 shadow-2xs">
+          <AlertCircle size={15} className="text-[#9e3028] flex-shrink-0 animate-pulse" />
+          <span className="leading-normal text-[#8e7a77]">
+            目前偵測到您處於 <strong className="text-[#9e3028]">GitHub Pages / 靜態網頁託管</strong> 環境。系統已為您自動啟動高效能「靜態智庫離線模式」，內建台股全方位點波動模擬、歷史線圖、歷史派息資料，無須連接 Express 後端依然 100% 正常完整運行！
+          </span>
+        </div>
+      )}
 
       {/* Floating broadcaster wave notifications */}
       {broadcast.visible && (

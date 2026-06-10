@@ -5,8 +5,11 @@ import { GoogleGenAI } from "@google/genai";
 import { DEFAULT_STOCKS } from "./src/constants";
 import yf from "yahoo-finance2";
 
-// Safe dual-mode instantiation for ESM (tsx dev) and CommonJS (esbuild production bundle)
-const yahooFinance = typeof yf === "function" ? new yf() : new (yf as any).default();
+// Safe dual-mode reference for ESM (tsx dev) and CommonJS (esbuild production bundle)
+// yahoo-finance2 is a pre-initialized default-exported singleton instance, so we extract it defensively
+const yahooFinance = (yf && (yf as any).default && typeof (yf as any).default.quote === "function")
+  ? (yf as any).default
+  : yf;
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
