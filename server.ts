@@ -78,7 +78,7 @@ async function updateStockCache() {
 
   try {
     console.log("Fetching live Taiwan Stock Exchange quotes from TWSE OpenAPI...");
-    const tseRes = await fetchWithTimeoutAndRetry("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL");
+    const tseRes = await fetchWithTimeoutAndRetry("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", {}, 1, 500);
     tseCache = await tseRes.json();
     console.log(`TWSE cache successfully loaded with ${tseCache.length} entries.`);
   } catch (err: any) {
@@ -87,11 +87,11 @@ async function updateStockCache() {
 
   try {
     console.log("Fetching live OTC quotes from TPEx OpenAPI...");
-    const tpexRes = await fetchWithTimeoutAndRetry("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes");
+    const tpexRes = await fetchWithTimeoutAndRetry("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes", {}, 0, 0);
     tpexCache = await tpexRes.json();
     console.log(`TPEx cache successfully loaded with ${tpexCache.length} entries.`);
   } catch (err: any) {
-    console.warn("Could not fetch TPEx fast-path data, will fall back to Yahoo Finance:", err?.message || err);
+    console.warn("Could not fetch TPEx fast-path data, will fall back to Yahoo Finance / real-time API.");
   } finally {
     isFetching = false;
   }
@@ -102,37 +102,90 @@ app.get("/api/stock/:id", async (req, res) => {
   const { id } = req.params;
   const name = (req.query.name as string) || "";
   
-  try {
-    await updateStockCache();
-  } catch (e) {
-    console.error("Cache update failure:", e);
-  }
-
-  // 1. Search in TSE cache
-  let tseFound = tseCache.find(
-    (s: any) => String(s.Code).trim() === String(id).trim()
-  );
-  let tpexFound: any = null;
+  // Trigger cache updates asynchronously in the background to avoid blocking user request times
+  updateStockCache().catch(e => console.error("Background cache update failed:", e));
 
   let currentPrice = 0;
   let change = 0;
   let changePercent = 0;
   let realName = name;
+  let detectedExchange: "TW" | "TWO" | null = null;
+  let misSuccess = false;
 
-  if (tseFound) {
-    currentPrice = parseFloat(tseFound.ClosingPrice) || 0;
-    change = parseFloat(tseFound.Change) || 0;
-    realName = tseFound.Name || realName;
-    if (currentPrice) {
-      const prev = currentPrice - change;
-      changePercent = prev ? (change / prev) * 100 : 0;
+  // 1. Try to fetch official real-time stock price from mis.twse.com.tw first (uncached, live)
+  try {
+    const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0`;
+    const misRes = await fetchWithTimeoutAndRetry(misUrl, {}, 1, 500);
+    const misData = await misRes.json();
+    if (misData && misData.msgArray && misData.msgArray.length > 0) {
+      const validItem = misData.msgArray.find((m: any) => m && m.n && m.key);
+      if (validItem) {
+        const yValue = parseFloat(validItem.y);
+        let parsedPrice = parseFloat(validItem.z);
+        
+        // Handle '-' during certain matching periods or outside standard execution
+        if (isNaN(parsedPrice) || parsedPrice <= 0) {
+          const asks = validItem.a ? validItem.a.split("_").filter(Boolean) : [];
+          const bids = validItem.b ? validItem.b.split("_").filter(Boolean) : [];
+          const bestAsk = asks[0] ? parseFloat(asks[0]) : 0;
+          const bestBid = bids[0] ? parseFloat(bids[0]) : 0;
+          if (bestAsk > 0 && bestBid > 0) {
+            parsedPrice = (bestAsk + bestBid) / 2;
+          } else if (bestAsk > 0) {
+            parsedPrice = bestAsk;
+          } else if (bestBid > 0) {
+            parsedPrice = bestBid;
+          } else {
+            parsedPrice = yValue || 0;
+          }
+        }
+
+        if (parsedPrice > 0) {
+          currentPrice = parsedPrice;
+          realName = validItem.n || realName;
+          detectedExchange = validItem.ex === "otc" ? "TWO" : "TW";
+          if (!isNaN(yValue) && yValue > 0) {
+            change = currentPrice - yValue;
+            changePercent = (change / yValue) * 100;
+          } else {
+            change = 0;
+            changePercent = 0;
+          }
+          misSuccess = true;
+          console.log(`Successfully fetched real-time TWSE API for ${id}: Price=${currentPrice}, Change=${change}`);
+        }
+      }
     }
-  } else {
-    // 2. Search in TPEx cache
+  } catch (err: any) {
+    console.warn(`mis.twse.com.tw real-time api failed for ${id}, falling back to OpenAPI/Yahoo:`, err?.message || err);
+  }
+
+  // 2. Search in local OpenAPI cache if real-time API failed
+  let tseFound = tseCache.find(
+    (s: any) => String(s.Code).trim() === String(id).trim()
+  );
+  let tpexFound: any = null;
+
+  if (!tseFound) {
     tpexFound = tpexCache.find(
       (s: any) => String(s.SecuritiesCompanyCode).trim() === String(id).trim()
     );
-    if (tpexFound) {
+  }
+
+  if (!detectedExchange) {
+    detectedExchange = tpexFound ? "TWO" : "TW";
+  }
+
+  if (!misSuccess) {
+    if (tseFound) {
+      currentPrice = parseFloat(tseFound.ClosingPrice) || 0;
+      change = parseFloat(tseFound.Change) || 0;
+      realName = tseFound.Name || realName;
+      if (currentPrice) {
+        const prev = currentPrice - change;
+        changePercent = prev ? (change / prev) * 100 : 0;
+      }
+    } else if (tpexFound) {
       currentPrice = parseFloat(tpexFound.Close) || 0;
       change = parseFloat(tpexFound.Change) || 0;
       realName = tpexFound.CompanyName || realName;
@@ -141,31 +194,28 @@ app.get("/api/stock/:id", async (req, res) => {
         changePercent = prev ? (change / prev) * 100 : 0;
       }
     }
-  }
 
-  try {
-    let yTicker = tseFound ? `${id}.TW` : tpexFound ? `${id}.TWO` : (`${id}.TW`); // fallback to TW
-    let quote;
+    // 3. Fallback to Yahoo Finance quote if cache didn't return a price
     try {
-      quote = await yahooFinance.quote(yTicker);
-    } catch (err: any) {
-      if (!tseFound && !tpexFound) {
-        yTicker = `${id}.TWO`;
+      let yTicker = `${id}.${detectedExchange}`;
+      let quote;
+      try {
         quote = await yahooFinance.quote(yTicker);
-      } else {
-        throw err;
+      } catch (err: any) {
+        yTicker = detectedExchange === "TW" ? `${id}.TWO` : `${id}.TW`;
+        quote = await yahooFinance.quote(yTicker);
       }
-    }
-    if (quote && quote.regularMarketPrice) {
-      currentPrice = quote.regularMarketPrice;
-      change = quote.regularMarketChange || 0;
-      changePercent = quote.regularMarketChangePercent || 0;
-      if (!tseFound && !tpexFound && (quote.longName || quote.shortName)) {
-        realName = quote.shortName || quote.longName || realName;
+      if (quote && quote.regularMarketPrice) {
+        currentPrice = quote.regularMarketPrice;
+        change = quote.regularMarketChange || 0;
+        changePercent = quote.regularMarketChangePercent || 0;
+        if (quote.shortName || quote.longName) {
+          realName = quote.shortName || quote.longName || realName;
+        }
       }
+    } catch (e) {
+      // Silently fallback
     }
-  } catch (e) {
-    // Silently fallback to TWSE or mocked data
   }
 
   // If we could not fetch a real price, fall back to default or generated numbers
@@ -175,7 +225,6 @@ app.get("/api/stock/:id", async (req, res) => {
     change = original.change || 0;
     changePercent = original.changePercent || 0;
   } else if (!currentPrice) {
-    // Completely unknown/custom stock default fallback
     currentPrice = 100;
     change = 1.5;
     changePercent = 1.52;
@@ -185,7 +234,7 @@ app.get("/api/stock/:id", async (req, res) => {
   try {
     const period1Date = new Date();
     period1Date.setMonth(period1Date.getMonth() - 11);
-    let yTicker = tseFound ? `${id}.TW` : tpexFound ? `${id}.TWO` : (`${id}.TW`);
+    let yTicker = `${id}.${detectedExchange}`;
     let yRes;
     try {
       yRes = await yahooFinance.chart(yTicker, { period1: period1Date, period2: new Date(), interval: '1mo' });
@@ -343,3 +392,6 @@ async function startServer() {
 }
 
 startServer();
+
+// Trigger initial cache warmup asynchronously on startup
+updateStockCache().catch(e => console.error("Initial background cache warmup failed:", e));
