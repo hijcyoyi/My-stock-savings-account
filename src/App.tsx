@@ -31,13 +31,13 @@ import { DEFAULT_STOCKS } from "./constants";
 // Time calculator for Taiwan Stock Market active session (UTC+8)
 const getTaiwanMarketState = (): MarketState => {
   const date = new Date();
-  const taiwanTime = new Date(
-    date.toLocaleString("en-US", { timeZone: "Asia/Taipei" })
-  );
+  // Ensure robust timezone handling across all browsers by shifting milliseconds and using UTC getters
+  const utcMilli = date.getTime() + date.getTimezoneOffset() * 60000;
+  const taiwanTime = new Date(utcMilli + 8 * 3600000);
   
-  const day = taiwanTime.getDay();
-  const hours = taiwanTime.getHours();
-  const minutes = taiwanTime.getMinutes();
+  const day = taiwanTime.getUTCDay();
+  const hours = taiwanTime.getUTCHours();
+  const minutes = taiwanTime.getUTCMinutes();
   const hhmm = hours * 100 + minutes;
 
   if (day === 0 || day === 6) {
@@ -336,7 +336,7 @@ const getPayoutDate = (exDateStr: string): string => {
 };
 
 const getEnrichedDividendHistory = (stockId: string, currentInfo: any[]): any[] => {
-  const result = [...currentInfo];
+  const result = [...(currentInfo || [])];
   const existingYears = new Set(result.map(d => d.year));
   
   const fillers: { [key: string]: { year: string; amount: number }[] } = {
@@ -1487,7 +1487,7 @@ export default function App() {
                                           else if (t.type === 'sell') sharesHeld -= t.shares;
                                         }
                                       });
-                                      if (sharesHeld > 0) totalDiv += sharesHeld * div.cashDividend;
+                                      if (sharesHeld > 0) totalDiv += sharesHeld * div.amount;
                                     });
                                     return Math.floor(totalDiv).toLocaleString();
                                   })()}
