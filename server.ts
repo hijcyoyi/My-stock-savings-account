@@ -3,11 +3,10 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { DEFAULT_STOCKS } from "./src/constants";
-import yf from "yahoo-finance2";
+import yahooFinance from "yahoo-finance2";
 
 const app = express();
-const PORT = 3000;
-const yahooFinance = new yf();
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json());
 
