@@ -13,7 +13,8 @@ import {
   Clock,
   Briefcase,
   AlertCircle,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -457,6 +458,7 @@ export default function App() {
     type: "normal",
     visible: false,
   });
+  const [syncing, setSyncing] = useState(false);
 
   const broadcastTimerRef = useRef<number | null>(null);
   const synthesizerRef = useRef<SpeechSynthesizer | null>(null);
@@ -1031,9 +1033,27 @@ export default function App() {
               <span className={`block h-1.5 w-1.5 rounded-full ${market.isOpen ? "bg-[#4d7c5a] animate-pulse" : "bg-[#8e8476]"}`} />
               <span>{market.desc}</span>
             </div>
-            <div className="text-[11px] text-[#8e8377] font-medium flex items-center gap-1">
+            <div className="text-[11px] text-[#8e8377] font-medium flex items-center gap-1.5 flex-wrap">
               <Clock size={12} className="text-[#8e8377]" />
-              自動即時更新：開盤中每 15 秒同步一次
+              <span>自動即時更新：開盤中每 15 秒同步一次</span>
+              <button
+                onClick={async () => {
+                  if (syncing) return;
+                  setSyncing(true);
+                  await syncAllStockPrices();
+                  setSyncing(false);
+                  synthesizerRef.current?.speak("已成功手動同步最新即時股價！", "normal", 3000);
+                }}
+                disabled={syncing}
+                className="ml-2 px-2.5 py-1 text-[10px] bg-[#9e3028]/10 hover:bg-[#9e3028]/20 text-[#9e3028] disabled:bg-[#8e8377]/10 disabled:text-[#8e8377] rounded flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                {syncing ? (
+                  <Loader2 size={10} className="animate-spin text-[#9e3028]" />
+                ) : (
+                  <RefreshCw size={10} className="text-[#9e3028]" />
+                )}
+                {syncing ? "同步中..." : "立即手動同步"}
+              </button>
             </div>
           </div>
           <button

@@ -3,7 +3,10 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import { DEFAULT_STOCKS } from "./src/constants";
-import yahooFinance from "yahoo-finance2";
+import yf from "yahoo-finance2";
+
+// Safe dual-mode instantiation for ESM (tsx dev) and CommonJS (esbuild production bundle)
+const yahooFinance = typeof yf === "function" ? new yf() : new (yf as any).default();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
