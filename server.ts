@@ -100,6 +100,79 @@ async function updateStockCache() {
   }
 }
 
+async function fetchYahooFinanceChartDirect(symbol: string): Promise<{
+  currentPrice: number;
+  change: number;
+  changePercent: number;
+  priceHistory: { month: string; price: number }[];
+} | null> {
+  // Fetch annual chart with monthly intervals
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1y&interval=1mo`;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      console.warn(`Direct Yahoo fetch failed for ${symbol} with status ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const resultObj = data?.chart?.result?.[0];
+    if (!resultObj) {
+      console.warn(`No Yahoo Finance chart result found for ${symbol}`);
+      return null;
+    }
+
+    const meta = resultObj.meta;
+    const currentPrice = meta?.regularMarketPrice;
+    if (currentPrice === undefined || currentPrice === null) {
+      console.warn(`No regular market price in Yahoo Finance meta for ${symbol}`);
+      return null;
+    }
+
+    // Try to derive the correct previous close
+    const prevClose = meta.chartPreviousClose !== undefined ? meta.chartPreviousClose : (meta.previousClose !== undefined ? meta.previousClose : currentPrice);
+    const change = currentPrice - prevClose;
+    const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+
+    // Build history
+    const quotes = resultObj.indicators?.quote?.[0];
+    const closes = quotes?.close || [];
+    const timestamps = resultObj.timestamp || [];
+    const priceHistory: { month: string; price: number }[] = [];
+
+    for (let i = 0; i < timestamps.length; i++) {
+      const price = closes[i];
+      const stamp = timestamps[i];
+      if (price !== null && price !== undefined && !isNaN(price)) {
+        const date = new Date(stamp * 1000);
+        const monthStr = `${date.getMonth() + 1}月`;
+        priceHistory.push({
+          month: monthStr,
+          price: Math.round(price * 10) / 10
+        });
+      }
+    }
+
+    const slicedHistory = priceHistory.slice(-12);
+
+    return {
+      currentPrice: Math.round(currentPrice * 100) / 100,
+      change: Math.round(change * 100) / 100,
+      changePercent: Math.round(changePercent * 100) / 100,
+      priceHistory: slicedHistory
+    };
+  } catch (err: any) {
+    console.warn(`fetchYahooFinanceChartDirect error for ${symbol}:`, err?.message || err);
+    return null;
+  }
+}
+
 // Default standard preloaded stocks list as lookup guides
 app.get("/api/stock/:id", async (req, res) => {
   const { id } = req.params;
@@ -112,116 +185,112 @@ app.get("/api/stock/:id", async (req, res) => {
   let change = 0;
   let changePercent = 0;
   let realName = name;
-  let detectedExchange: "TW" | "TWO" | null = null;
-  let misSuccess = false;
+  let finalHistory: any[] = [];
+  let detectedExchange: "TW" | "TWO" = "TW";
+  let yahooSuccess = false;
 
-  // 1. Try to fetch official real-time stock price from mis.twse.com.tw first (uncached, live)
-  try {
-    const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0`;
-    const misRes = await fetchWithTimeoutAndRetry(misUrl, {}, 1, 500);
-    const misData = await misRes.json();
-    if (misData && misData.msgArray && misData.msgArray.length > 0) {
-      const validItem = misData.msgArray.find((m: any) => m && m.n && m.key);
-      if (validItem) {
-        const yValue = parseFloat(validItem.y);
-        let parsedPrice = parseFloat(validItem.z);
-        
-        // Handle '-' during certain matching periods or outside standard execution
-        if (isNaN(parsedPrice) || parsedPrice <= 0) {
-          const asks = validItem.a ? validItem.a.split("_").filter(Boolean) : [];
-          const bids = validItem.b ? validItem.b.split("_").filter(Boolean) : [];
-          const bestAsk = asks[0] ? parseFloat(asks[0]) : 0;
-          const bestBid = bids[0] ? parseFloat(bids[0]) : 0;
-          if (bestAsk > 0 && bestBid > 0) {
-            parsedPrice = (bestAsk + bestBid) / 2;
-          } else if (bestAsk > 0) {
-            parsedPrice = bestAsk;
-          } else if (bestBid > 0) {
-            parsedPrice = bestBid;
-          } else {
-            parsedPrice = yValue || 0;
-          }
-        }
+  // 1. Try Yahoo Finance DIRECT query FIRST (extremely reliable and high availability)
+  console.log(`Querying Yahoo Finance Direct for stock ${id}...`);
+  let yahooData = await fetchYahooFinanceChartDirect(`${id}.TW`);
+  if (yahooData && yahooData.currentPrice > 0) {
+    currentPrice = yahooData.currentPrice;
+    change = yahooData.change;
+    changePercent = yahooData.changePercent;
+    finalHistory = yahooData.priceHistory;
+    detectedExchange = "TW";
+    yahooSuccess = true;
+    console.log(`Yahoo Direct Success (.TW) for ${id}: price=${currentPrice}, changePercent=${changePercent}`);
+  } else {
+    // Try OTC ticker .TWO
+    yahooData = await fetchYahooFinanceChartDirect(`${id}.TWO`);
+    if (yahooData && yahooData.currentPrice > 0) {
+      currentPrice = yahooData.currentPrice;
+      change = yahooData.change;
+      changePercent = yahooData.changePercent;
+      finalHistory = yahooData.priceHistory;
+      detectedExchange = "TWO";
+      yahooSuccess = true;
+      console.log(`Yahoo Direct Success (.TWO) for ${id}: price=${currentPrice}, changePercent=${changePercent}`);
+    }
+  }
 
-        if (parsedPrice > 0) {
-          currentPrice = parsedPrice;
-          realName = validItem.n || realName;
-          detectedExchange = validItem.ex === "otc" ? "TWO" : "TW";
-          if (!isNaN(yValue) && yValue > 0) {
-            change = currentPrice - yValue;
-            changePercent = (change / yValue) * 100;
-          } else {
-            change = 0;
-            changePercent = 0;
+  // 2. If Yahoo DIRECT failed, fall back to official TWSE real-time APIs
+  if (!yahooSuccess) {
+    try {
+      const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0`;
+      const misRes = await fetchWithTimeoutAndRetry(misUrl, {}, 1, 500);
+      const misData = await misRes.json();
+      if (misData && misData.msgArray && misData.msgArray.length > 0) {
+        const validItem = misData.msgArray.find((m: any) => m && m.n && m.key);
+        if (validItem) {
+          const yValue = parseFloat(validItem.y);
+          let parsedPrice = parseFloat(validItem.z);
+          
+          if (isNaN(parsedPrice) || parsedPrice <= 0) {
+            const asks = validItem.a ? validItem.a.split("_").filter(Boolean) : [];
+            const bids = validItem.b ? validItem.b.split("_").filter(Boolean) : [];
+            const bestAsk = asks[0] ? parseFloat(asks[0]) : 0;
+            const bestBid = bids[0] ? parseFloat(bids[0]) : 0;
+            if (bestAsk > 0 && bestBid > 0) {
+              parsedPrice = (bestAsk + bestBid) / 2;
+            } else if (bestAsk > 0) {
+              parsedPrice = bestAsk;
+            } else if (bestBid > 0) {
+              parsedPrice = bestBid;
+            } else {
+              parsedPrice = yValue || 0;
+            }
           }
-          misSuccess = true;
-          console.log(`Successfully fetched real-time TWSE API for ${id}: Price=${currentPrice}, Change=${change}`);
+
+          if (parsedPrice > 0) {
+            currentPrice = parsedPrice;
+            realName = validItem.n || realName;
+            detectedExchange = validItem.ex === "otc" ? "TWO" : "TW";
+            if (!isNaN(yValue) && yValue > 0) {
+              change = currentPrice - yValue;
+              changePercent = (change / yValue) * 100;
+            }
+            yahooSuccess = true;
+          }
         }
       }
+    } catch (err: any) {
+      console.warn(`mis.twse.com.tw failed for ${id}:`, err?.message || err);
     }
-  } catch (err: any) {
-    console.warn(`mis.twse.com.tw real-time api failed for ${id}, falling back to OpenAPI/Yahoo:`, err?.message || err);
   }
 
-  // 2. Search in local OpenAPI cache if real-time API failed
-  let tseFound = tseCache.find(
-    (s: any) => String(s.Code).trim() === String(id).trim()
-  );
-  let tpexFound: any = null;
+  // 3. Fallback to daily open API caches
+  if (!yahooSuccess) {
+    const tseFound = tseCache.find((s: any) => String(s.Code).trim() === String(id).trim());
+    let tpexFound: any = null;
+    if (!tseFound) {
+      tpexFound = tpexCache.find((s: any) => String(s.SecuritiesCompanyCode).trim() === String(id).trim());
+    }
 
-  if (!tseFound) {
-    tpexFound = tpexCache.find(
-      (s: any) => String(s.SecuritiesCompanyCode).trim() === String(id).trim()
-    );
-  }
-
-  if (!detectedExchange) {
-    detectedExchange = tpexFound ? "TWO" : "TW";
-  }
-
-  if (!misSuccess) {
     if (tseFound) {
       currentPrice = parseFloat(tseFound.ClosingPrice) || 0;
       change = parseFloat(tseFound.Change) || 0;
       realName = tseFound.Name || realName;
+      detectedExchange = "TW";
       if (currentPrice) {
         const prev = currentPrice - change;
         changePercent = prev ? (change / prev) * 100 : 0;
       }
+      yahooSuccess = true;
     } else if (tpexFound) {
       currentPrice = parseFloat(tpexFound.Close) || 0;
       change = parseFloat(tpexFound.Change) || 0;
       realName = tpexFound.CompanyName || realName;
+      detectedExchange = "TWO";
       if (currentPrice) {
         const prev = currentPrice - change;
         changePercent = prev ? (change / prev) * 100 : 0;
       }
-    }
-
-    // 3. Fallback to Yahoo Finance quote if cache didn't return a price
-    try {
-      let yTicker = `${id}.${detectedExchange}`;
-      let quote;
-      try {
-        quote = await yahooFinance.quote(yTicker);
-      } catch (err: any) {
-        yTicker = detectedExchange === "TW" ? `${id}.TWO` : `${id}.TW`;
-        quote = await yahooFinance.quote(yTicker);
-      }
-      if (quote && quote.regularMarketPrice) {
-        currentPrice = quote.regularMarketPrice;
-        change = quote.regularMarketChange || 0;
-        changePercent = quote.regularMarketChangePercent || 0;
-        if (quote.shortName || quote.longName) {
-          realName = quote.shortName || quote.longName || realName;
-        }
-      }
-    } catch (e) {
-      // Silently fallback
+      yahooSuccess = true;
     }
   }
 
-  // If we could not fetch a real price, fall back to default or generated numbers
+  // 4. Default Seed/Fallbacks if all live sources failed
   const original = DEFAULT_STOCKS.find(s => s.id === id);
   if (!currentPrice && original) {
     currentPrice = original.currentPrice;
@@ -230,43 +299,10 @@ app.get("/api/stock/:id", async (req, res) => {
   } else if (!currentPrice) {
     currentPrice = 100;
     change = 1.5;
-    changePercent = 1.52;
-  }
-
-  let finalHistory: any[] = [];
-  try {
-    const period1Date = new Date();
-    period1Date.setMonth(period1Date.getMonth() - 11);
-    let yTicker = `${id}.${detectedExchange}`;
-    let yRes;
-    try {
-      yRes = await yahooFinance.chart(yTicker, { period1: period1Date, period2: new Date(), interval: '1mo' });
-    } catch (chartErr: any) {
-      if (!tseFound && !tpexFound) {
-        yTicker = `${id}.TWO`;
-        yRes = await yahooFinance.chart(yTicker, { period1: period1Date, period2: new Date(), interval: '1mo' });
-      } else {
-        throw chartErr;
-      }
-    }
-    if (yRes && yRes.quotes && yRes.quotes.length > 0) {
-      finalHistory = yRes.quotes.filter((q: any) => q.close !== null).map((q: any) => {
-        const dateObj = new Date(q.date);
-        return {
-          month: `${dateObj.getMonth() + 1}月`,
-          price: Math.round(q.close * 10) / 10
-        };
-      });
-      if (finalHistory.length > 12) {
-        finalHistory = finalHistory.slice(-12);
-      }
-    }
-  } catch(e: any) {
-    // Silently fallback without noisy logs
+    changePercent = 1.5;
   }
 
   if (finalHistory.length === 0) {
-    // Generate historical trends proportional to current live price as fallback
     finalHistory = original
       ? original.priceHistory.map(pt => {
           const originalLast = original.priceHistory[original.priceHistory.length - 1].price;
