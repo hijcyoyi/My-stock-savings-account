@@ -33,9 +33,8 @@ import { DEFAULT_STOCKS } from "./constants";
 // Time calculator for Taiwan Stock Market active session (UTC+8)
 const getTaiwanMarketState = (): MarketState => {
   const date = new Date();
-  // Ensure robust timezone handling across all browsers by shifting milliseconds and using UTC getters
-  const utcMilli = date.getTime() + date.getTimezoneOffset() * 60000;
-  const taiwanTime = new Date(utcMilli + 8 * 3600000);
+  // Ensure robust timezone handling across all browsers by shifting UTC milliseconds directly to UTC+8
+  const taiwanTime = new Date(date.getTime() + 8 * 3600000);
   
   const day = taiwanTime.getUTCDay();
   const hours = taiwanTime.getUTCHours();
@@ -379,25 +378,21 @@ const getEnrichedDividendHistory = (stockId: string, currentInfo: any[]): any[] 
     ],
   };
 
-  const currentFillers = fillers[stockId] || [
-    { year: "2024", amount: Number((result[0]?.amount * 0.95 || 5).toFixed(1)) },
-    { year: "2023", amount: Number((result[0]?.amount * 0.9 || 4.5).toFixed(1)) },
-    { year: "2022", amount: Number((result[0]?.amount * 1.05 || 5.2).toFixed(1)) },
-    { year: "2021", amount: Number((result[0]?.amount * 0.85 || 4.2).toFixed(1)) },
-    { year: "2020", amount: Number((result[0]?.amount * 0.8 || 4.0).toFixed(1)) },
-  ];
+  const currentFillers = fillers[stockId];
 
-  currentFillers.forEach(f => {
-    if (!existingYears.has(f.year)) {
-      result.push({
-        year: f.year,
-        amount: f.amount,
-        status: "歷史配息",
-        exDividendDate: `${f.year}/08/15`,
-        lastBuyDate: `${f.year}/08/13`,
-      });
-    }
-  });
+  if (currentFillers) {
+    currentFillers.forEach(f => {
+      if (!existingYears.has(f.year)) {
+        result.push({
+          year: f.year,
+          amount: f.amount,
+          status: "歷史配息",
+          exDividendDate: `${f.year}/08/15`,
+          lastBuyDate: `${f.year}/08/13`,
+        });
+      }
+    });
+  }
 
   return result.sort((a, b) => b.year.localeCompare(a.year));
 };
@@ -673,6 +668,72 @@ export default function App() {
   const [aiReports, setAiReports] = useState<{ [key: string]: string }>({});
   const [aiErrors, setAiErrors] = useState<{ [key: string]: string | null }>({});
   const [expandedCards, setExpandedCards] = useState<{ [key: string]: boolean }>({});
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    isPriceLocked: false,
+    lockedPrice: "",
+    dividendAmount: "",
+    dividendStatus: "預估" as "已公告" | "預估",
+    exDividendDate: "",
+    lastBuyDate: "",
+  });
+
+  useEffect(() => {
+    if (detailStock) {
+      const enrichedHist = getEnrichedDividendHistory(detailStock.id, detailStock.dividendInfo);
+      const currentDiv = enrichedHist[0] || { year: "2026", amount: 0, status: "預估", exDividendDate: "—", lastBuyDate: "—" };
+      setEditForm({
+        name: detailStock.name,
+        isPriceLocked: !!detailStock.isPriceLocked,
+        lockedPrice: String(detailStock.currentPrice),
+        dividendAmount: String(currentDiv.amount),
+        dividendStatus: (currentDiv.status === "已公告" ? "已公告" : "預估") as any,
+        exDividendDate: currentDiv.exDividendDate === "—" ? "" : currentDiv.exDividendDate,
+        lastBuyDate: currentDiv.lastBuyDate === "—" ? "" : currentDiv.lastBuyDate,
+      });
+    } else {
+      setIsEditingInfo(false);
+    }
+  }, [detailStockId]);
+
+  const handleSaveInfoEdit = () => {
+    if (!detailStock) return;
+    setStocks(prev => prev.map(s => {
+      if (s.id !== detailStock.id) return s;
+      
+      const nLockedPrice = Number(editForm.lockedPrice) || s.currentPrice;
+      const nDivAmount = parseFloat(editForm.dividendAmount) || 0;
+      
+      const updatedDividendInfo = [...(s.dividendInfo || [])];
+      const currentYear = new Date().getFullYear().toString();
+      const entryIdx = updatedDividendInfo.findIndex(d => d.year === currentYear);
+      const newEntry = {
+        year: currentYear,
+        amount: nDivAmount,
+        status: editForm.dividendStatus,
+        exDividendDate: editForm.exDividendDate || "—",
+        lastBuyDate: editForm.lastBuyDate || "—"
+      };
+
+      if (entryIdx !== -1) {
+        updatedDividendInfo[entryIdx] = newEntry;
+      } else {
+        updatedDividendInfo.unshift(newEntry);
+      }
+
+      return {
+        ...s,
+        name: editForm.name || s.name,
+        isPriceLocked: editForm.isPriceLocked,
+        currentPrice: editForm.isPriceLocked ? nLockedPrice : s.currentPrice,
+        dividendInfo: updatedDividendInfo,
+      };
+    }));
+    
+    setIsEditingInfo(false);
+    synthesizerRef.current?.speak("已成功儲存個股與派息設定變更！", "normal", 3000);
+  };
 
   const [broadcast, setBroadcast] = useState<BroadcastState>({
     msg: "",
@@ -941,9 +1002,7 @@ export default function App() {
       // First, capture the current list of stocks we want to sync
       const listToSync = stocksRef.current;
 
-      if (isStaticPages) {
-        setSyncing(true);
-      }
+      setSyncing(true);
       
       const newQuotes = await Promise.all(
         listToSync.map(async item => {
@@ -976,31 +1035,11 @@ export default function App() {
                       });
                     })();
 
-                // Generate proportional dividends
+                // Keep actual dividends or empty if none (do not generate fake/fixed dividends)
                 const originalDefault = DEFAULT_STOCKS.find(s => s.id === item.id);
-                const originalDividends = originalDefault ? item.dividendInfo : [
-                  {
-                    year: "2026",
-                    amount: Math.round(res.currentPrice * 0.035 * 10) / 10,
-                    status: "預估",
-                    exDividendDate: "2026/08/15",
-                    lastBuyDate: "2026/08/13"
-                  },
-                  {
-                    year: "2025",
-                    amount: Math.round(res.currentPrice * 0.04 * 10) / 10,
-                    status: "配發",
-                    exDividendDate: "2025/08/12",
-                    lastBuyDate: "2025/08/11"
-                  },
-                  {
-                    year: "2024",
-                    amount: Math.round(res.currentPrice * 0.038 * 10) / 10,
-                    status: "配發",
-                    exDividendDate: "2024/08/15",
-                    lastBuyDate: "2024/08/14"
-                  }
-                ];
+                const originalDividends = originalDefault 
+                  ? (item.dividendInfo && item.dividendInfo.length > 0 ? item.dividendInfo : originalDefault.dividendInfo)
+                  : (item.dividendInfo || []);
 
                 // Automatically generate real-time professional analysis in localized financial jargon
                 const liveAnalysis = generateExpertFinancialReport(res.id, res.name, res.currentPrice, res.changePercent, item);
@@ -1075,13 +1114,16 @@ export default function App() {
           const update = newQuotes.find(q => q && q.id === item.id);
           if (update && update.resJson) {
             const { resJson } = update;
+            const updatedPrice = item.isPriceLocked ? item.currentPrice : (resJson.currentPrice || item.currentPrice);
+            const updatedChange = item.isPriceLocked ? (item.change ?? 0) : (typeof resJson.change === "number" ? resJson.change : item.change);
+            const updatedChangePercent = item.isPriceLocked ? (item.changePercent ?? 0) : (typeof resJson.changePercent === "number" ? resJson.changePercent : item.changePercent);
+
             return {
               ...item,
               name: resJson.name || item.name,
-              currentPrice: resJson.currentPrice || item.currentPrice,
-              change: typeof resJson.change === "number" ? resJson.change : item.change,
-              changePercent:
-                typeof resJson.changePercent === "number" ? resJson.changePercent : item.changePercent,
+              currentPrice: updatedPrice,
+              change: updatedChange,
+              changePercent: updatedChangePercent,
               priceHistory:
                 resJson.priceHistory && resJson.priceHistory.length > 0
                   ? resJson.priceHistory
@@ -1099,9 +1141,7 @@ export default function App() {
     } catch (err) {
       console.error("Batch sync prices error:", err);
     } finally {
-      if (isStaticPages) {
-        setSyncing(false);
-      }
+      setSyncing(false);
     }
   };
 
@@ -2109,7 +2149,7 @@ export default function App() {
                           title="點擊放大配息資料與歷年配息軌跡"
                         >
                           <div className="text-xs font-bold text-[#9e3028] mb-4 flex items-center justify-between border-b border-[#faf8f5] pb-2">
-                            <span className="flex items-center gap-1.5">💰 當期股利、除息與發放日前瞻</span>
+                            <span className="flex items-center gap-1.5 font-black text-[#9e3028]">🎁 當期股利、除息與發放日前瞻</span>
                             <span className="text-[10px] text-[#8e8377] font-semibold bg-[#faf8f5] group-hover:bg-[#9e3028] group-hover:text-white px-2 py-0.5 rounded border border-[#eae6df] group-hover:border-transparent transition-colors flex items-center gap-1">
                               🔍 點擊放大
                             </span>
@@ -2128,7 +2168,7 @@ export default function App() {
                                     <div className="text-[9px] text-[#8e8377] font-bold">當期配息 (元/股)</div>
                                     <div className="text-[14px] font-bold text-[#c84a42] mt-0.5 whitespace-nowrap">
                                       {currentDiv.amount.toFixed(1)} 元{" "}
-                                      <span className="text-[9px] font-bold px-1 py-0.2 bg-[#9e3028]/5 border border-[#9e3028]/15 rounded text-[#9e3028] ml-0.5">
+                                      <span className="text-[9px] font-bold px-1 py-0.5 bg-[#9e3028]/5 border border-[#9e3028]/15 rounded text-[#9e3028] ml-0.5">
                                         {currentDiv.status}
                                       </span>
                                     </div>
@@ -2169,6 +2209,7 @@ export default function App() {
                         {/* Sub-Bento 3: Server-side AI Advisor with Real-time Generation */}
                         <div className="lg:col-span-1 bg-white border border-[#eae6df] rounded-xl p-4 md:p-5 shadow-xs flex flex-col justify-between">
                           <div>
+
                             <div className="flex items-center justify-between mb-3 border-b border-[#faf8f5] pb-2">
                               <h4 className="font-bold text-[#9e3028] flex items-center gap-1.5 text-xs sm:text-sm">
                                 <Sparkles size={16} className="text-[#9e3028]" />

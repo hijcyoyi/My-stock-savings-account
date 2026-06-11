@@ -34,6 +34,7 @@ export interface Stock {
   priceHistory: PricePoint[];
   dividendInfo: DividendPoint[];
   aiAnalysis: string;
+  isPriceLocked?: boolean;
 }
 
 export interface MarketState {
