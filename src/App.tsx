@@ -14,6 +14,7 @@ import {
   Clock,
   Briefcase,
   AlertCircle,
+  Key,
   AlertTriangle,
   RefreshCw
 } from "lucide-react";
@@ -618,6 +619,8 @@ export default function App() {
       console.warn("Storage replicate failed in sandy sandbox:", e);
     }
   }, [customGeminiApiKey]);
+
+  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
 
   const [stocks, setStocks] = useState<Stock[]>(() => {
     try {
@@ -1347,85 +1350,154 @@ export default function App() {
   );
 
   return (
-    <div id="app_view" className="min-h-screen bg-[#faf8f5] font-sans text-[#2d2926] flex flex-col select-none relative pb-16">
+    <div 
+      id="app_view" 
+      className="min-h-screen bg-[#faf8f5] font-sans text-[#2d2926] flex flex-col select-none relative pb-16"
+      style={{ zoom: 1.25 }}
+    >
       {/* Visual Header */}
       <header className="bg-white/85 backdrop-blur-md border-b border-[#eae6df] text-[#2d2926] p-5 md:p-6 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto w-full flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#9e3028] rounded-xl flex items-center justify-center shadow-sm">
+        <div className="max-w-7xl mx-auto w-full flex justify-between items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 bg-[#9e3028] rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm">
               <Coins className="h-5 w-5 text-white animate-pulse" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-lg md:text-xl font-bold tracking-tight flex items-center whitespace-nowrap gap-2 text-[#2d2926]">
                 我的股票存摺 <span className="text-[10px] bg-[#8e8377]/10 text-[#7a7065] font-extrabold px-1.5 py-0.5 rounded-md border border-[#8e8377]/20 uppercase tracking-wider">Muji System</span>
               </h1>
-              <p className="text-[#8e8377] text-xs mt-0.5 font-medium block">
+              <p className="text-[#8e8377] text-xs mt-0.5 font-medium block truncate">
                 AI 專業財務智庫與個股決策報告系統
               </p>
             </div>
           </div>
           
-          {/* Total Asset net appraisal desktop display */}
-          <div className="hidden md:block text-right bg-[#fdfdfc] px-5 py-2.5 rounded-xl border border-[#eae6df] shadow-xs">
-            <div className="text-[10px] uppercase tracking-wider text-[#8e8377] font-bold flex items-center gap-1.5 justify-end">
-              <Briefcase size={11} className="text-[#9e3028]" />
-              總資產淨值 (TWD)
-            </div>
-            <div className="text-xl md:text-2xl font-mono font-bold text-[#2d2926] mt-0.5">
-              $ {totalPortfolioAssetValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          {/* Header Action Controls on Right Side */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {/* Gemini API Key Toggle Trigger Button */}
+            <button
+              onClick={() => setIsKeyModalOpen(true)}
+              className="flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer bg-[#faf8f5] border-[#eae6df] hover:bg-[#eae6df] text-[#2d2926] shadow-xs"
+              title="配置 Gemini 專家 API Key"
+            >
+              <Key size={13} className={customGeminiApiKey ? "text-[#4d7c5a] animate-pulse" : "text-[#9e3028] animate-bounce"} />
+              <span className="hidden sm:inline">AI 智庫金鑰</span>
+              {customGeminiApiKey ? (
+                <span className="inline-flex h-2 w-2 rounded-full bg-[#4d7c5a]" />
+              ) : (
+                <span className="inline-flex h-2 w-2 rounded-full bg-[#9e3028]" />
+              )}
+            </button>
+
+            {/* Total Asset Appraisal */}
+            <div className="text-right bg-[#fdfdfc] px-4 py-1.5 md:px-5 md:py-2 rounded-xl border border-[#eae6df] shadow-xs">
+              <div className="text-[10px] uppercase tracking-wider text-[#8e8377] font-bold flex items-center gap-1 justify-end">
+                <Briefcase size={10} className="text-[#9e3028]" />
+                <span className="hidden xs:inline">總資產淨值</span>
+                <span className="xs:hidden">資產</span> (TWD)
+              </div>
+              <div className="text-sm md:text-xl font-mono font-bold text-[#2d2926] mt-0.5">
+                $ {totalPortfolioAssetValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
             </div>
           </div>
         </div>
       </header>
 
-      <div className="bg-[#fcf8f2] border-b border-[#eae1df] md:px-6 px-4 py-4.5 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-[#9e3028]/10 rounded-lg text-[#9e3028] mt-0.5 animate-pulse">
-            <Sparkles size={16} />
-          </div>
-          <div className="text-xs leading-relaxed text-[#8e7a77]">
-            <span className="text-[#9e3028] font-bold block mb-1">
-              🚀 雲端 AI 智庫與真實即時台股行情運作中
-            </span>
-            已載入高相容性代理伺服器，自動獲取<strong>真實即時台股個股行情</strong>！<br />
-            為保障個股「<strong>即時 AI 深度股價診斷與分析</strong>」多媒體導讀與播報功能，請在右側手動配置您的專屬 Gemini API Key。
-          </div>
-        </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center justify-between text-[10px] text-[#8e8377] font-semibold px-0.5">
-              <span>手動配置 Gemini API Key</span>
-              <a
-                href="https://aistudio.google.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[#9e3028] hover:underline font-bold"
+      {/* Gemini API Key Configuration Modal (125% zoom safe) */}
+      {isKeyModalOpen && (
+        <div className="fixed inset-0 bg-[#2d2926]/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div 
+            className="bg-[#fcfaf7] border border-[#eae1df] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col animate-in fade-in zoom-in-95 duration-250"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-white border-b border-[#eae1df] flex justify-between items-center">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-[#9e3028]/10 rounded-lg text-[#9e3028]">
+                  <Sparkles size={16} />
+                </div>
+                <h3 className="text-sm font-bold text-[#2d2926] tracking-tight">AI 語音專家智庫設定</h3>
+              </div>
+              <button
+                onClick={() => setIsKeyModalOpen(false)}
+                className="text-[#8e7a77] hover:text-[#2d2926] transition-colors p-1.5 rounded-lg hover:bg-[#faf8f5] cursor-pointer"
               >
-                👉 免費獲取 Key 連結 (建議使用)
-              </a>
+                <X size={16} />
+              </button>
             </div>
-            <input
-              type="password"
-              placeholder="貼上您的 API Key (AI_...) "
-              value={customGeminiApiKey}
-              onChange={(e) => setCustomGeminiApiKey(e.target.value)}
-              className="text-xs px-3.5 py-2 bg-white border border-[#eae6df] rounded-xl focus:outline-none focus:border-[#9e3028] font-mono shadow-2xs w-full sm:w-64"
-            />
-          </div>
-          <div className="flex items-end h-full pt-4">
-            {customGeminiApiKey ? (
-              <span className="text-[10px] bg-[#4d7c5a]/10 text-[#4d7c5a] px-3 py-2 rounded-xl font-bold whitespace-nowrap flex items-center justify-center gap-1.5 border border-[#4d7c5a]/25">
-                <span className="h-1.5 w-1.5 rounded-full bg-[#4d7c5a] animate-pulse" />
-                AI 智庫 Key 已就緒
-              </span>
-            ) : (
-              <span className="text-[10px] bg-[#9e3028]/10 text-[#9e3028] px-3 py-2 rounded-xl font-bold whitespace-nowrap flex items-center justify-center border border-[#9e3028]/25">
-                尚未配置 Key (使用內建模擬智庫)
-              </span>
-            )}
+
+            {/* Modal Body */}
+            <div className="p-6 flex flex-col gap-4">
+              <div className="text-xs leading-relaxed text-[#8e7a77] space-y-2">
+                <p>
+                  <span className="text-[#9e3028] font-bold">🚀 雲端 AI 智庫與真實即時台股行情運作中</span>
+                </p>
+                <p>
+                  已載入高相容性代理伺服器，自動獲取<strong>真實即時台股個股行情</strong>！
+                </p>
+                <p>
+                  為保障並啟用個股「<strong>即時 AI 深度股價診斷與分析</strong>」多媒體語音導讀與專業播報功能，請手動配置您的專屬 Gemini API Key。配置完成後將安全存於您的瀏覽器本機中。
+                </p>
+              </div>
+
+              <div className="bg-[#fcf8f2] border border-[#eae1df] p-4 rounded-xl flex flex-col gap-3">
+                <div className="flex items-center justify-between text-[11px] text-[#8e8377] font-semibold">
+                  <span>貼上您的 Gemini API Key</span>
+                  <a
+                    href="https://aistudio.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#9e3028] hover:underline font-bold flex items-center gap-1"
+                  >
+                    👉 點此免費獲取 Key 連結 (建議)
+                  </a>
+                </div>
+                <input
+                  type="password"
+                  placeholder="貼上 AI Studio API Key (AI_...) "
+                  value={customGeminiApiKey}
+                  onChange={(e) => setCustomGeminiApiKey(e.target.value)}
+                  className="text-xs px-3.5 py-2.5 bg-white border border-[#eae6df] rounded-xl focus:outline-none focus:border-[#9e3028] font-mono shadow-2xs w-full"
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-[#8e8377] border-t border-[#eae1df]/60 pt-3">
+                <span>金鑰配置狀態：</span>
+                {customGeminiApiKey ? (
+                  <span className="bg-[#4d7c5a]/10 text-[#4d7c5a] px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 border border-[#4d7c5a]/20">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#4d7c5a] animate-pulse" />
+                    AI 智庫 Key 已配置
+                  </span>
+                ) : (
+                  <span className="bg-[#9e3028]/10 text-[#9e3028] px-2.5 py-1 rounded-lg font-bold border border-[#9e3028]/25">
+                    尚未設定 (使用內建理財專家)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-white border-t border-[#eae1df] flex justify-end gap-2.5">
+              <button
+                onClick={() => setIsKeyModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold text-[#8e7a77] hover:text-[#2d2926] bg-[#faf8f5] hover:bg-[#eae6df] border border-[#eae6df] rounded-xl transition-colors cursor-pointer"
+              >
+                關閉
+              </button>
+              <button
+                onClick={() => {
+                  setIsKeyModalOpen(false);
+                  synthesizerRef.current?.speak("AI 智庫金鑰配置成功，已為您儲存至本機。", "normal", 3000);
+                }}
+                className="px-5 py-2 text-xs font-bold text-white bg-[#9e3028] hover:bg-[#852721] rounded-xl transition-colors shadow-sm cursor-pointer"
+              >
+                確定儲存
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Floating broadcaster wave notifications */}
       {broadcast.visible && (
