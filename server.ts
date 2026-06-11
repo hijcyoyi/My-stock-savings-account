@@ -173,6 +173,70 @@ async function fetchYahooFinanceChartDirect(symbol: string): Promise<{
   }
 }
 
+async function fetchYahooFinanceRealtime(id: string): Promise<{
+  currentPrice: number;
+  change: number;
+  changePercent: number;
+  realName: string;
+  exchange: "TW" | "TWO";
+} | null> {
+  const tickers = [`${id}.TW`, `${id}.TWO`].map(t => t.trim());
+  for (const ticker of tickers) {
+    try {
+      console.log(`Querying yahooFinance.quote for ${ticker}...`);
+      const quote = await yahooFinance.quote(ticker);
+      if (quote && quote.regularMarketPrice !== undefined && quote.regularMarketPrice !== null) {
+        const currentPrice = quote.regularMarketPrice;
+        const change = quote.regularMarketChange !== undefined ? quote.regularMarketChange : 0;
+        const changePercent = quote.regularMarketChangePercent !== undefined ? quote.regularMarketChangePercent : 0;
+        const rawName = quote.shortName || quote.longName || "";
+        const exchange: "TW" | "TWO" = ticker.endsWith(".TWO") ? "TWO" : "TW";
+        console.log(`yahooFinance.quote Success for ${ticker}: Price=${currentPrice}, ChangePercent=${changePercent}`);
+        return {
+          currentPrice: Math.round(currentPrice * 100) / 100,
+          change: Math.round(change * 100) / 100,
+          changePercent: Math.round(changePercent * 100) / 100,
+          realName: rawName,
+          exchange
+        };
+      }
+    } catch (err: any) {
+      console.warn(`yahooFinance.quote error for ${ticker}:`, err?.message || err);
+    }
+  }
+  return null;
+}
+
+async function fetchYahooFinanceChart(ticker: string): Promise<{ month: string; price: number }[] | null> {
+  try {
+    const period1Date = new Date();
+    period1Date.setMonth(period1Date.getMonth() - 11);
+    console.log(`Querying yahooFinance.chart for ${ticker}...`);
+    const yRes = await yahooFinance.chart(ticker, {
+      period1: period1Date,
+      period2: new Date(),
+      interval: "1mo"
+    });
+    if (yRes && yRes.quotes && yRes.quotes.length > 0) {
+      const history = yRes.quotes
+        .filter((q: any) => q.close !== null && q.close !== undefined && !isNaN(q.close))
+        .map((q: any) => {
+          const dateObj = new Date(q.date);
+          return {
+            month: `${dateObj.getMonth() + 1}月`,
+            price: Math.round(q.close * 10) / 10
+          };
+        });
+      if (history.length > 0) {
+        return history.slice(-12);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`yahooFinance.chart failed for ${ticker}:`, err?.message || err);
+  }
+  return null;
+}
+
 // Default standard preloaded stocks list as lookup guides
 app.get("/api/stock/:id", async (req, res) => {
   const { id } = req.params;
@@ -189,32 +253,52 @@ app.get("/api/stock/:id", async (req, res) => {
   let detectedExchange: "TW" | "TWO" = "TW";
   let yahooSuccess = false;
 
-  // 1. Try Yahoo Finance DIRECT query FIRST (extremely reliable and high availability)
-  console.log(`Querying Yahoo Finance Direct for stock ${id}...`);
-  let yahooData = await fetchYahooFinanceChartDirect(`${id}.TW`);
-  if (yahooData && yahooData.currentPrice > 0) {
-    currentPrice = yahooData.currentPrice;
-    change = yahooData.change;
-    changePercent = yahooData.changePercent;
-    finalHistory = yahooData.priceHistory;
-    detectedExchange = "TW";
+  // 1. Try Yahoo Finance REAL-TIME API FIRST (via yahoo-finance2 library)
+  console.log(`Querying Yahoo Finance Realtime via library for stock ${id}...`);
+  const rtData = await fetchYahooFinanceRealtime(id);
+  if (rtData) {
+    currentPrice = rtData.currentPrice;
+    change = rtData.change;
+    changePercent = rtData.changePercent;
+    detectedExchange = rtData.exchange;
     yahooSuccess = true;
-    console.log(`Yahoo Direct Success (.TW) for ${id}: price=${currentPrice}, changePercent=${changePercent}`);
-  } else {
-    // Try OTC ticker .TWO
-    yahooData = await fetchYahooFinanceChartDirect(`${id}.TWO`);
+    if (rtData.realName) {
+      realName = rtData.realName;
+    }
+    
+    // Also try to grab history
+    const ticker = `${id}.${detectedExchange}`;
+    const hist = await fetchYahooFinanceChart(ticker);
+    if (hist && hist.length > 0) {
+      finalHistory = hist;
+    }
+  }
+
+  // 2. If modern library API failed, fall back to Direct Chart fetch
+  if (!yahooSuccess) {
+    console.log(`Realtime quote library failed. Trying Direct Chart fetch for stock ${id}...`);
+    let yahooData = await fetchYahooFinanceChartDirect(`${id}.TW`);
     if (yahooData && yahooData.currentPrice > 0) {
       currentPrice = yahooData.currentPrice;
       change = yahooData.change;
       changePercent = yahooData.changePercent;
       finalHistory = yahooData.priceHistory;
-      detectedExchange = "TWO";
+      detectedExchange = "TW";
       yahooSuccess = true;
-      console.log(`Yahoo Direct Success (.TWO) for ${id}: price=${currentPrice}, changePercent=${changePercent}`);
+    } else {
+      yahooData = await fetchYahooFinanceChartDirect(`${id}.TWO`);
+      if (yahooData && yahooData.currentPrice > 0) {
+        currentPrice = yahooData.currentPrice;
+        change = yahooData.change;
+        changePercent = yahooData.changePercent;
+        finalHistory = yahooData.priceHistory;
+        detectedExchange = "TWO";
+        yahooSuccess = true;
+      }
     }
   }
 
-  // 2. If Yahoo DIRECT failed, fall back to official TWSE real-time APIs
+  // 3. Fallback to official TWSE real-time APIs
   if (!yahooSuccess) {
     try {
       const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0`;
@@ -259,7 +343,7 @@ app.get("/api/stock/:id", async (req, res) => {
     }
   }
 
-  // 3. Fallback to daily open API caches
+  // 4. Fallback to daily open API caches
   if (!yahooSuccess) {
     const tseFound = tseCache.find((s: any) => String(s.Code).trim() === String(id).trim());
     let tpexFound: any = null;
@@ -290,7 +374,7 @@ app.get("/api/stock/:id", async (req, res) => {
     }
   }
 
-  // 4. Default Seed/Fallbacks if all live sources failed
+  // 5. Default Seed/Fallbacks if all live sources failed
   const original = DEFAULT_STOCKS.find(s => s.id === id);
   if (!currentPrice && original) {
     currentPrice = original.currentPrice;
