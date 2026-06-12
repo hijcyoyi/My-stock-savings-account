@@ -216,10 +216,11 @@ async function fetchYahooFinanceRealtime(id: string): Promise<{
   realName: string;
   exchange: "TW" | "TWO";
 } | null> {
-  const suffixes = ["TW", "TWO"];
+  const isNumeric = /^\d+$/.test(id);
+  const suffixes = isNumeric ? ["TW", "TWO"] : [""];
   
   for (const suffix of suffixes) {
-    const symbol = `${id}.${suffix}`;
+    const symbol = suffix ? `${id}.${suffix}` : id;
     
     try {
       console.log(`Querying Yahoo Finance library quote for ${symbol}...`);
@@ -236,7 +237,7 @@ async function fetchYahooFinanceRealtime(id: string): Promise<{
           change: Math.round(change * 100) / 100,
           changePercent: Math.round(changePercent * 100) / 100,
           realName: rawName,
-          exchange: suffix as "TW" | "TWO"
+          exchange: (suffix === "TWO" ? "TWO" : "TW") as "TW" | "TWO"
         };
       }
     } catch (err: any) {
@@ -281,6 +282,14 @@ app.get("/api/stock/:id", async (req, res) => {
   const { id } = req.params;
   const name = (req.query.name as string) || "";
   
+  // Strictly prevent browser and intermediate CDN caching of real-time stock data
+  res.set({
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "Surrogate-Control": "no-store"
+  });
+
   // Trigger cache updates asynchronously in the background to avoid blocking user request times
   updateStockCache().catch(e => console.error("Background cache update failed:", e));
 
@@ -295,7 +304,7 @@ app.get("/api/stock/:id", async (req, res) => {
   // 1. Try official TWSE real-time MIS API FIRST for 100% accurate, 0-second delay real-time quotes during Taiwan market hours
   console.log(`Querying official TWSE MIS Realtime API for stock ${id}...`);
   try {
-    const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0`;
+    const misUrl = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_${id}.tw|otc_${id}.tw&json=1&delay=0&_=${Date.now()}`;
     const misRes = await fetchWithTimeoutAndRetry(misUrl, {}, 1, 500);
     const misData = await misRes.json();
     if (misData && misData.msgArray && misData.msgArray.length > 0) {

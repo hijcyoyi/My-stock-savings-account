@@ -622,14 +622,7 @@ export default function App() {
       const stored = localStorage.getItem("my_stocks");
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (
-          parsed &&
-          parsed.length > 0 &&
-          Array.isArray(parsed[0].dividendInfo) &&
-          parsed[0].priceHistory &&
-          parsed[0].priceHistory[0] &&
-          parsed[0].priceHistory[0].month
-        ) {
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       }
@@ -784,7 +777,7 @@ export default function App() {
               isSearching: false,
             }));
           } else {
-            const checkRes = await fetch(`/api/stock/${tradeForm.id}`);
+            const checkRes = await fetch(`/api/stock/${tradeForm.id}?_=${Date.now()}`);
             if (checkRes.ok) {
               const data = await checkRes.json();
               if (data.currentPrice) {
@@ -862,6 +855,7 @@ export default function App() {
       return;
     }
     
+    let finalClonedList: Stock[] = [];
     setStocks(prev => {
       const cloned = [...prev];
       const existIdx = cloned.findIndex(s => s.id === id);
@@ -930,8 +924,15 @@ export default function App() {
            transactions: [newTx]
         });
       }
+      finalClonedList = cloned;
       return cloned;
     });
+
+    setTimeout(() => {
+      if (finalClonedList.length > 0) {
+        syncAllStockPrices(finalClonedList);
+      }
+    }, 50);
 
     synthesizerRef.current?.speak(`已成功紀錄 ${name} 的 ${type === 'buy' ? '買入' : '賣出'} 交易。`, "normal", 3000);
     
@@ -997,10 +998,10 @@ export default function App() {
     }
   };
 
-  const syncAllStockPrices = async () => {
+  const syncAllStockPrices = async (customList?: Stock[]) => {
     try {
       // First, capture the current list of stocks we want to sync
-      const listToSync = stocksRef.current;
+      const listToSync = customList || stocksRef.current;
 
       setSyncing(true);
       
@@ -1060,7 +1061,7 @@ export default function App() {
             }
 
             // Normal Express backend API flow or offline random walk fallback
-            const fetched = await fetch(`/api/stock/${item.id}?name=${encodeURIComponent(item.name)}`);
+            const fetched = await fetch(`/api/stock/${item.id}?_=${Date.now()}&name=${encodeURIComponent(item.name)}`);
             if (fetched.ok) {
               const resJson = await fetched.json();
               return { id: item.id, resJson };
@@ -1164,14 +1165,12 @@ export default function App() {
     // Initial price sync after mount
     syncAllStockPrices();
 
-    // Hot interval triggers price sync every 15s during active market
+    // Hot interval triggers price sync every 20s unconditionally to keep the UI perfectly synchronized
     const priceScheduler = window.setInterval(() => {
       const activeMarket = getTaiwanMarketState();
       setMarket(activeMarket);
-      if (activeMarket.isOpen) {
-        syncAllStockPrices();
-      }
-    }, 15000);
+      syncAllStockPrices();
+    }, 20000);
 
     return () => {
       alertScheduler.stop();
