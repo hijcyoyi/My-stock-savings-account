@@ -195,18 +195,7 @@ class AlertScheduler {
     const todayStr = now.toISOString().split("T")[0];
     const elapsedMinutes = (Date.now() - this.sessionStartTime) / (1000 * 60);
 
-    // 1. Tired eye alert every 30 minutes
-    if (elapsedMinutes > 0 && Math.floor(elapsedMinutes) % 30 === 0 && Math.floor(elapsedMinutes) !== 0) {
-      const alertKey = `eye-${todayStr}-${Math.floor(elapsedMinutes)}`;
-      if (this.lastTriggeredAlerts.eye !== alertKey) {
-        this.uiSynthesizer.speak(
-          "提示：您已盯盤超過 30 分鐘，建議適度閉眼或遠眺，舒緩視力疲勞以維持精準的投資決策力。",
-          "warning",
-          8000
-        );
-        this.lastTriggeredAlerts.eye = alertKey;
-      }
-    }
+    // (Tired eye alert every 30 minutes is disabled)
 
     // 2. Open market alert (09:00)
     if (formattedTime === "09:00" && this.lastTriggeredAlerts.open !== todayStr) {
